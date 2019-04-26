@@ -41,37 +41,7 @@ using namespace std;
 #define StorageAdapterProtocolSpecificProperty (STORAGE_PROPERTY_ID) 49
 
 #define NVME_MAX_LOG_SIZE 4096  // value from random internet search
-typedef enum _STORAGE_PROTOCOL_TYPE {
-	ProtocolTypeUnknown = 0x00,
-	ProtocolTypeScsi,
-	ProtocolTypeAta,
-	ProtocolTypeNvme,
-	ProtocolTypeSd,
-	ProtocolTypeProprietary = 0x7E,
-	ProtocolTypeMaxReserved = 0x7F
-} STORAGE_PROTOCOL_TYPE, *PSTORAGE_PROTOCOL_TYPE;
-typedef struct _STORAGE_PROTOCOL_SPECIFIC_DATA {
-	STORAGE_PROTOCOL_TYPE ProtocolType;
-	DWORD                 DataType;
-	DWORD                 ProtocolDataRequestValue;
-	DWORD                 ProtocolDataRequestSubValue;
-	DWORD                 ProtocolDataOffset;
-	DWORD                 ProtocolDataLength;
-	DWORD                 FixedProtocolReturnData;
-	DWORD                 Reserved[3];
-} STORAGE_PROTOCOL_SPECIFIC_DATA, *PSTORAGE_PROTOCOL_SPECIFIC_DATA;
 
-typedef enum _STORAGE_PROTOCOL_NVME_DATA_TYPE {
-	NVMeDataTypeUnknown = 0,
-	NVMeDataTypeIdentify,
-	NVMeDataTypeLogPage,
-	NVMeDataTypeFeature
-} STORAGE_PROTOCOL_NVME_DATA_TYPE, *PSTORAGE_PROTOCOL_NVME_DATA_TYPE;
-typedef struct _STORAGE_PROTOCOL_DATA_DESCRIPTOR {
-	DWORD                          Version;
-	DWORD                          Size;
-	STORAGE_PROTOCOL_SPECIFIC_DATA ProtocolSpecificData;
-} STORAGE_PROTOCOL_DATA_DESCRIPTOR, *PSTORAGE_PROTOCOL_DATA_DESCRIPTOR;
 
 // End of missing stuff
 
@@ -81,6 +51,10 @@ DtaDiskNVMe::DtaDiskNVMe() {};
 void DtaDiskNVMe::init(const char * devref)
 {
     LOG(D1) << "Creating DtaDiskNVMe::DtaDiskNVMe() " << devref;
+
+    SDWB * scsi =
+        (SDWB *)_aligned_malloc((sizeof(SDWB)), 4096);
+    scsiPointer = (void *)scsi;
 
      hDev = CreateFile(devref,
                       GENERIC_WRITE | GENERIC_READ,
@@ -95,89 +69,172 @@ void DtaDiskNVMe::init(const char * devref)
         isOpen = TRUE;
 }
 
-uint8_t DtaDiskNVMe::sendCmd(ATACOMMAND cmd, uint8_t protocol, uint16_t comID,
-                        void * buffer, uint16_t bufferlen)
-{
-	UNREFERENCED_PARAMETER(cmd);
-	UNREFERENCED_PARAMETER(protocol);
-	UNREFERENCED_PARAMETER(comID);
-	UNREFERENCED_PARAMETER(buffer);
-	UNREFERENCED_PARAMETER(bufferlen);
-	LOG(D1) << "Entering DtaDiskNVMe::sendCmd";
-	LOG(D1) << "DtaDiskNVMe::sendCmd Not yet implemented ";
-	return DTAERROR_COMMAND_ERROR;
-}
 
-/** adds the IDENTIFY information to the disk_info structure */
+// Following code thanks to https://github.com/jeffwyeh/sedutil/commit/a8c2a884df706a77f8f03e4f202f9e004d3fd93e
+// (Taking advantage of SCSI emulation in Windows NVMe drivers)
+uint8_t DtaDiskNVMe::sendCmd(ATACOMMAND cmd, uint8_t protocol, uint16_t comID,
+    void * buffer, uint32_t bufferlen)
+{
+    // Windows structure with 32-bit sense data
+    typedef struct
+    {
+        SCSI_PASS_THROUGH_DIRECT Sptd;
+        BYTE sense[32];
+    }
+    SptdStruct;
+
+    SptdStruct sptdS = { 0 };
+    int iRet = 0;
+    DWORD bytesReturn = 0;
+
+    LOG(D1) << "Entering DtaDiskNVMe::sendCmd";
+
+    // initialize SCSI CDB
+    switch (cmd)
+    {
+    default:
+    {
+        return 0xFF;
+    }
+
+    case IF_RECV:
+    {
+        sptdS.Sptd.Cdb[0] = 0xA2;                                /* Opcode */
+        sptdS.Sptd.Cdb[1] = protocol;                            /* Security Protocol */
+        sptdS.Sptd.Cdb[2] = comID >> 8;                          /* Security Protocol Specific - MSB */
+        sptdS.Sptd.Cdb[3] = comID & 0xFF;                        /* Security Protocol Specific - LSB */
+        sptdS.Sptd.Cdb[4] = 0x80;                                /* INC 512 */
+        sptdS.Sptd.Cdb[6] = (bufferlen / 512) >> 24;             /* Allocation Length - MSB */
+        sptdS.Sptd.Cdb[7] = ((bufferlen / 512) >> 16) & 0xFF;
+        sptdS.Sptd.Cdb[8] = ((bufferlen / 512) >> 8) & 0xFF;
+        sptdS.Sptd.Cdb[9] = (bufferlen / 512) & 0xFF;            /* Allocation Length - LSB */
+        break;
+    }
+
+    case IF_SEND:
+    {
+        sptdS.Sptd.Cdb[0] = 0xB5;                                /* Opcode */
+        sptdS.Sptd.Cdb[1] = protocol;                            /* Security Protocol */
+        sptdS.Sptd.Cdb[2] = comID >> 8;                          /* Security Protocol Specific - MSB */
+        sptdS.Sptd.Cdb[3] = comID & 0xFF;                        /* Security Protocol Specific - LSB */
+        sptdS.Sptd.Cdb[4] = 0x80;                                /* INC 512 */
+        sptdS.Sptd.Cdb[6] = (bufferlen / 512) >> 24;             /* Transfer Length - MSB */
+        sptdS.Sptd.Cdb[7] = ((bufferlen / 512) >> 16) & 0xFF;
+        sptdS.Sptd.Cdb[8] = ((bufferlen / 512) >> 8) & 0xFF;
+        sptdS.Sptd.Cdb[9] = (bufferlen / 512) & 0xFF;            /* Transfer Length - LSB */
+        break;
+    }
+    }
+
+    sptdS.Sptd.Length = sizeof(SCSI_PASS_THROUGH_DIRECT);
+    sptdS.Sptd.CdbLength = 12;
+    sptdS.Sptd.DataIn = (cmd == IF_RECV) ? SCSI_IOCTL_DATA_IN : SCSI_IOCTL_DATA_OUT;
+    sptdS.Sptd.SenseInfoLength = sizeof(sptdS.sense);
+    sptdS.Sptd.DataTransferLength = bufferlen;
+    sptdS.Sptd.TimeOutValue = 2;
+    sptdS.Sptd.DataBuffer = buffer;
+    sptdS.Sptd.SenseInfoOffset = offsetof(SptdStruct, sense);
+
+    iRet = DeviceIoControl(hDev,
+        IOCTL_SCSI_PASS_THROUGH_DIRECT,
+        &sptdS,
+        sizeof(sptdS),
+        &sptdS,
+        sizeof(sptdS),
+        &bytesReturn,
+        NULL);
+
+    if (0 == iRet)
+    {
+        LOG(D4) << "cdb after ";
+        IFLOG(D4) DtaHexDump(sptdS.Sptd.Cdb, sizeof(sptdS.Sptd.Cdb));
+        LOG(D4) << "sense after ";
+        IFLOG(D4) DtaHexDump(sptdS.sense, sizeof(sptdS.sense));
+        return 0xFF;
+    }
+
+    // check for successful target completion
+    if (sptdS.Sptd.ScsiStatus != 0)
+    {
+        LOG(D4) << "cdb after ";
+        IFLOG(D4) DtaHexDump(sptdS.Sptd.Cdb, sizeof(sptdS.Sptd.Cdb));
+        LOG(D4) << "sense after ";
+        IFLOG(D4) DtaHexDump(sptdS.sense, sizeof(sptdS.sense));
+        return 0xFF;
+    }
+
+    // Success
+    return 0x00;
+}
 
 void DtaDiskNVMe::identify(OPAL_DiskInfo& disk_info)
 {
     LOG(D1) << "Entering DtaDiskNVMe::identify()";
-	PVOID   buffer = NULL;
-	UINT8   *results = NULL;
-	ULONG   bufferLength = 0;
-	DWORD dwReturned = 0;
-	BOOL iorc = 0;
+    PVOID   buffer = NULL;
+    UINT8   *results = NULL;
+    ULONG   bufferLength = 0;
+    DWORD dwReturned = 0;
+    BOOL iorc = 0;
 
-	PSTORAGE_PROPERTY_QUERY query = NULL;
-	PSTORAGE_PROTOCOL_SPECIFIC_DATA protocolData = NULL;
-	PSTORAGE_PROTOCOL_DATA_DESCRIPTOR protocolDataDescr = NULL;
-	//  This buffer allocation is needed because the STORAGE_PROPERTY_QUERY has additional data
-	// that the nvme driver doesn't use ???????????????????
-	/* ****************************************************************************************
-	!!DANGER WILL ROBINSON!! !!DANGER WILL ROBINSON!! !!DANGER WILL ROBINSON!!
-	This buffer definition causes the STORAGE_PROTOCOL_SPECIFIC_DATA to OVERLAY the
-	STORAGE_PROPERTY_QUERY.AdditionalParameters field
-	* **************************************************************************************** */
-	bufferLength = FIELD_OFFSET(STORAGE_PROPERTY_QUERY, AdditionalParameters)
-		+ sizeof(STORAGE_PROTOCOL_SPECIFIC_DATA) + NVME_MAX_LOG_SIZE;
-	buffer = malloc(bufferLength);
-	/* */
-	if (buffer == NULL) {
-		LOG(E) << "DeviceNVMeQueryProtocolDataTest: allocate buffer failed, exit.\n";
-		return;
-	}
+    PSTORAGE_PROPERTY_QUERY query = NULL;
+    PSTORAGE_PROTOCOL_SPECIFIC_DATA protocolData = NULL;
+    PSTORAGE_PROTOCOL_DATA_DESCRIPTOR protocolDataDescr = NULL;
+    //  This buffer allocation is needed because the STORAGE_PROPERTY_QUERY has additional data
+    // that the nvme driver doesn't use ???????????????????
+    /* ****************************************************************************************
+    !!DANGER WILL ROBINSON!! !!DANGER WILL ROBINSON!! !!DANGER WILL ROBINSON!!
+    This buffer definition causes the STORAGE_PROTOCOL_SPECIFIC_DATA to OVERLAY the
+    STORAGE_PROPERTY_QUERY.AdditionalParameters field
+    * **************************************************************************************** */
+    bufferLength = FIELD_OFFSET(STORAGE_PROPERTY_QUERY, AdditionalParameters)
+        + sizeof(STORAGE_PROTOCOL_SPECIFIC_DATA) + NVME_MAX_LOG_SIZE;
+    buffer = malloc(bufferLength);
+    /* */
+    if (buffer == NULL) {
+        LOG(E) << "DeviceNVMeQueryProtocolDataTest: allocate buffer failed, exit.\n";
+        return;
+    }
 
-	//
-	// Initialize query data structure to get Identify Data.
-	//
-	ZeroMemory(buffer, bufferLength);
+    //
+    // Initialize query data structure to get Identify Data.
+    //
+    ZeroMemory(buffer, bufferLength);
 
-	query = (PSTORAGE_PROPERTY_QUERY)buffer;
-	/* ****************************************************************************************
-	!!DANGER WILL ROBINSON!! !!DANGER WILL ROBINSON!! !!DANGER WILL ROBINSON!!
-	This buffer definition causes the STORAGE_PROTOCOL_SPECIFIC_DATA to OVERLAY the
-	STORAGE_PROPERTY_QUERY.AdditionalParameters field
-	* **************************************************************************************** */
-	protocolDataDescr = (PSTORAGE_PROTOCOL_DATA_DESCRIPTOR)buffer;
-	protocolData = (PSTORAGE_PROTOCOL_SPECIFIC_DATA)query->AdditionalParameters;
-	/* */
-	query->PropertyId = StorageAdapterProtocolSpecificProperty;
-	query->QueryType = PropertyStandardQuery;
+    query = (PSTORAGE_PROPERTY_QUERY)buffer;
+    /* ****************************************************************************************
+    !!DANGER WILL ROBINSON!! !!DANGER WILL ROBINSON!! !!DANGER WILL ROBINSON!!
+    This buffer definition causes the STORAGE_PROTOCOL_SPECIFIC_DATA to OVERLAY the
+    STORAGE_PROPERTY_QUERY.AdditionalParameters field
+    * **************************************************************************************** */
+    protocolDataDescr = (PSTORAGE_PROTOCOL_DATA_DESCRIPTOR)buffer;
+    protocolData = (PSTORAGE_PROTOCOL_SPECIFIC_DATA)query->AdditionalParameters;
+    /* */
+    query->PropertyId = StorageAdapterProtocolSpecificProperty;
+    query->QueryType = PropertyStandardQuery;
 
-	protocolData->ProtocolType = ProtocolTypeNvme;
-	protocolData->DataType = NVMeDataTypeIdentify;
-	//	protocolData->ProtocolDataRequestValue = NVME_IDENTIFY_CNS_CONTROLLER;
-	protocolData->ProtocolDataRequestSubValue = 0;
-	protocolData->ProtocolDataOffset = sizeof(STORAGE_PROTOCOL_SPECIFIC_DATA);
-	protocolData->ProtocolDataLength = NVME_MAX_LOG_SIZE;
+    protocolData->ProtocolType = ProtocolTypeNvme;
+    protocolData->DataType = NVMeDataTypeIdentify;
+    //	protocolData->ProtocolDataRequestValue = NVME_IDENTIFY_CNS_CONTROLLER;
+    protocolData->ProtocolDataRequestSubValue = 0;
+    protocolData->ProtocolDataOffset = sizeof(STORAGE_PROTOCOL_SPECIFIC_DATA);
+    protocolData->ProtocolDataLength = NVME_MAX_LOG_SIZE;
 
-	iorc = DeviceIoControl(hDev, IOCTL_STORAGE_QUERY_PROPERTY,
-		buffer, bufferLength, buffer, bufferLength, &dwReturned, NULL);
+    iorc = DeviceIoControl(hDev, IOCTL_STORAGE_QUERY_PROPERTY,
+        buffer, bufferLength, buffer, bufferLength, &dwReturned, NULL);
 
-//
-//
-//
+    //
+    //
+    //
     disk_info.devType = DEVICE_TYPE_NVME;
-	results = (UINT8 *)buffer + FIELD_OFFSET(STORAGE_PROPERTY_QUERY, AdditionalParameters)
-		+ sizeof(STORAGE_PROTOCOL_SPECIFIC_DATA);
-	results += 4;
-	memcpy(disk_info.serialNum, results, sizeof(disk_info.serialNum));
-	results += sizeof(disk_info.serialNum);
-	memcpy(disk_info.modelNum, results, sizeof(disk_info.modelNum));
-	results += sizeof(disk_info.modelNum);
-	memcpy(disk_info.firmwareRev, results, sizeof(disk_info.firmwareRev));
-	
+    results = (UINT8 *)buffer + FIELD_OFFSET(STORAGE_PROPERTY_QUERY, AdditionalParameters)
+        + sizeof(STORAGE_PROTOCOL_SPECIFIC_DATA);
+    results += 4;
+    memcpy(disk_info.serialNum, results, sizeof(disk_info.serialNum));
+    results += sizeof(disk_info.serialNum);
+    memcpy(disk_info.modelNum, results, sizeof(disk_info.modelNum));
+    results += sizeof(disk_info.modelNum);
+    memcpy(disk_info.firmwareRev, results, sizeof(disk_info.firmwareRev));
+
 
     return;
 }

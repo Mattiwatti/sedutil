@@ -31,6 +31,7 @@ along with sedutil.  If not, see <http://www.gnu.org/licenses/>.
 #include "DtaEndianFixup.h"
 #include "DtaStructures.h"
 #include "DtaHexDump.h"
+#include "DtaDiskUSB.h"
 
 using namespace std;
 
@@ -52,8 +53,7 @@ void DtaDiskNVMe::init(const char * devref)
 {
     LOG(D1) << "Creating DtaDiskNVMe::DtaDiskNVMe() " << devref;
 
-    SDWB * scsi =
-        (SDWB *)_aligned_malloc((sizeof(SDWB)), 4096);
+    SDWB * scsi = (SDWB *)_aligned_malloc((sizeof(SDWB)), 4096);
     scsiPointer = (void *)scsi;
 
      hDev = CreateFile(devref,

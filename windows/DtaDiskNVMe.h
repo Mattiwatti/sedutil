@@ -19,8 +19,21 @@ along with sedutil.  If not, see <http://www.gnu.org/licenses/>.
 * C:E********************************************************************** */
 #pragma once
 #include "os.h"
+#include <stdio.h>
+#include <stdlib.h>
+#include "DtaHexDump.h"
+
+#pragma warning(push)
+#pragma warning(disable : 4091)
+#include <Ntddscsi.h>
+#pragma warning(pop)
 #include "DtaDiskType.h"
 /** Device specific implementation of disk access functions. */
+typedef struct _SCSI_PASS_THROUGH_DIRECT_WITH_BUFFER {
+	SCSI_PASS_THROUGH_DIRECT sptd;
+	ULONG             Filler;      // realign buffer to double word boundary
+	UCHAR             ucSenseBuf[32];
+} SCSI_PASS_THROUGH_DIRECT_WITH_BUFFER, *PSCSI_PASS_THROUGH_DIRECT_WITH_BUFFER;
 
 class DtaDiskNVMe : public DtaDiskType {
 public:

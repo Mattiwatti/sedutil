@@ -231,7 +231,7 @@ DtaSession::sendCommand(DtaCommand * cmd, DtaResponse & response)
     if ((0 == response.h.cp.outstandingData) &&
         (0 == response.h.cp.minTransfer) &&
         (0 == response.h.cp.length)) {
-        LOG(D1) << "All Response(s) returned – no further data, request parsing error";
+        LOG(D1) << "All Response(s) returned no further data, request parsing error";
 		return DTAERROR_COMMAND_ERROR;
     }
     if ((0 == response.h.cp.length) ||

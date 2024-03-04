@@ -6,6 +6,6 @@ set -x
 rm -rf scratch
 mkdir scratch
 cd scratch
-wget https://www.kernel.org/pub/linux/utils/boot/syslinux/${SYSLINUX}.tar.xz
+wget --no-check-certificate https://www.kernel.org/pub/linux/utils/boot/syslinux/${SYSLINUX}.tar.xz
 tar xf ${SYSLINUX}.tar.xz 
 git clone --bare ${BUILDROOT} buildroot.git

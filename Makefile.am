@@ -11,10 +11,10 @@ SEDUTIL_COMMON_CODE = Common/log.h \
 	Common/DtaDevGeneric.cpp Common/DtaDevOpal1.cpp \
 	Common/DtaDevGeneric.h Common/DtaDevOpal1.h \
 	Common/DtaDevOpal2.cpp Common/DtaDevOpal.cpp \
-	Common/DtaDevOpalite.h Common/DtaDevOpalite.h \
-	Common/DtaDevPyrite1.h Common/DtaDevPyrite1.h \
-	Common/DtaDevPyrite2.h Common/DtaDevPyrite2.h \
-	Common/DtaDevRuby1.h Common/DtaDevRuby1.h \
+	Common/DtaDevOpalite.cpp Common/DtaDevOpalite.h \
+	Common/DtaDevPyrite1.cpp Common/DtaDevPyrite1.h \
+	Common/DtaDevPyrite2.cpp Common/DtaDevPyrite2.h \
+	Common/DtaDevRuby1.cpp Common/DtaDevRuby1.h \
 	Common/DtaDiskType.cpp Common/DtaHashPwd.cpp \
 	Common/DtaDiskType.h Common/DtaHashPwd.h \
 	Common/DtaHexDump.cpp Common/DtaResponse.cpp \

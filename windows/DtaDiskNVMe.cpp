@@ -38,9 +38,6 @@ void DtaDiskNVMe::init(const char * devref)
 {
     LOG(D1) << "Creating DtaDiskNVMe::DtaDiskNVMe() " << devref;
     
-    SDWB * scsi = (SDWB *)_aligned_malloc((sizeof(SDWB)), 4096);
-    scsiPointer = (void *)scsi;
-
      hDev = CreateFile(devref,
                       GENERIC_WRITE | GENERIC_READ | GENERIC_EXECUTE,
                       FILE_SHARE_WRITE | FILE_SHARE_READ | FILE_SHARE_DELETE,
@@ -55,7 +52,6 @@ void DtaDiskNVMe::init(const char * devref)
     else 
         isOpen = TRUE;
 }
-
 // Following code thanks to https://github.com/jeffwyeh/sedutil/commit/a8c2a884df706a77f8f03e4f202f9e004d3fd93e
 // (Taking advantage of SCSI emulation in Windows NVMe drivers)
 uint8_t DtaDiskNVMe::sendCmd(ATACOMMAND cmd, uint8_t protocol, uint16_t comID,

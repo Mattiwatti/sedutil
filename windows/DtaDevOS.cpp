@@ -17,7 +17,6 @@ You should have received a copy of the GNU General Public License
 along with sedutil.  If not, see <http://www.gnu.org/licenses/>.
 
 * C:E********************************************************************** */
-#pragma once
 #include "os.h"
 #include <stdio.h>
 #include <iostream>
@@ -36,7 +35,7 @@ along with sedutil.  If not, see <http://www.gnu.org/licenses/>.
 #include "DtaDiskNVMe.h"
 
 using namespace std;
-DtaDevOS::DtaDevOS() {};
+DtaDevOS::DtaDevOS() = default;
 void DtaDevOS::init(const char * devref)
 {
     LOG(D1) << "Creating DtaDevOS::DtaDevOS() " << devref;
@@ -82,6 +81,9 @@ void DtaDevOS::init(const char * devref)
 		_In_(DWORD)        sizeof(STORAGE_DEVICE_DESCRIPTOR),		// size of output buffer
 		_Out_opt_(LPDWORD)      &BytesReturned,						// number of bytes returned
 		_Inout_opt_(LPOVERLAPPED) NULL)) {
+		disk = nullptr;
+		CloseHandle(hDev);
+		isOpen = false;
 		return;
 	}
 	// OVERLAPPED structure
@@ -97,12 +99,20 @@ void DtaDevOS::init(const char * devref)
 		disk = new DtaDiskNVMe();
 		break;
 	default:
+		disk = nullptr;
+		CloseHandle(hDev);
+		isOpen = false;
 		return;
 	}
 
 	disk->init(dev);
     identify(disk_info);
-	if (DEVICE_TYPE_OTHER != disk_info.devType) discovery0();
+	if (DEVICE_TYPE_OTHER != disk_info.devType) {
+		discovery0();
+	} else {
+		CloseHandle(hDev);
+		isOpen = false;
+	}
 }
 
 uint8_t DtaDevOS::sendCmd(ATACOMMAND cmd, uint8_t protocol, uint16_t comID,
@@ -142,13 +152,13 @@ void DtaDevOS::identify(OPAL_DiskInfo& di)
 /** Static member to scann for supported drives */
 int DtaDevOS::diskScan()
 {
-	char devname[25];
+	char devname[255];
 	int i = 0;
 	DtaDev * d;
 	LOG(D1) << "Creating diskList";
 	printf("\nScanning for Opal compliant disks\n");
 	while (TRUE) {
-		sprintf_s(devname, 23, "\\\\.\\PhysicalDrive%i", i);
+		_snprintf_s(devname, ARRAYSIZE(devname) - sizeof(char), "\\\\.\\PhysicalDrive%i", i);
 		d = new DtaDevGeneric(devname);
 		if (d->isPresent()) {
 			printf("%s", devname);
@@ -159,7 +169,7 @@ int DtaDevOS::diskScan()
 				(d->isPyrite2() ? "P" : " "), (d->isRuby1() ? "r" : " "));
 			else
 				printf("%s", " No      ");
-			cout << d->getModelNum() << " " << d->getFirmwareRev() << std::endl;
+			cout << d->getModelNum() << " " << d->getFirmwareRev() << '\n';
 			if (MAX_DISKS == i) {
 				LOG(I) << MAX_DISKS << " disks, really?";
 				delete d;
@@ -179,6 +189,8 @@ int DtaDevOS::diskScan()
 DtaDevOS::~DtaDevOS()
 {
     LOG(D1) << "Destroying DtaDevOS";
-	delete disk;
-	CloseHandle(hDev);
+	if (isOpen) {
+		delete disk;
+		CloseHandle(hDev);
+	}
 }
